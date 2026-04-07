@@ -1,0 +1,155 @@
+setwd("/Volumes/BCP-ALL/presentations/RNA_seq")
+library(DESeq2)
+library(ggplot2)
+library(pheatmap)
+#loading the gene expression data 
+data = as.matrix(read.csv("Diabetes_infection_count.csv", row.names=1))
+#loading the phenotype data 
+pheno = read.csv("Diabetes_infection_pheno.csv", row.names=1)
+
+table(pheno$CL4)
+table(pheno$CL3)
+
+#explore the data, dim function give you the dimension of your data; how 
+#many columns(samples) do you have and how many row(genes) do you have
+dim(data)
+
+#explore the data distribution using the histogram plot
+hist(data, col = "orange", main="Histogram", breaks = 100)
+
+#scaling the data using log2 transformation to better visulization
+# we use (+1) to avoid the infinity character when we log zero valus 
+hist(log2(data+1), col = "orange", main="Histogram")
+
+#It is absolutely critical that the columns of the "data" and the rows of 
+#the "pheno" (information about samples) are in the same order.DESeq2 will
+#not make guesses as to which column of the count matrix belongsto which row
+#of the column data, these must be provided to DESeq2 already in consistent order
+dim(data)
+dim(pheno)
+all(rownames(pheno) == colnames(data))
+which(rownames(pheno) != colnames(data))
+pheno = pheno[colnames(data),]
+dim(data)
+
+data = data[rowSums(data) > 10,]
+dim(data)
+
+#The deseq2 package require the count data values to be integers 
+#save the gene names in a variable
+genes = row.names(data)
+#convert the data values to integers
+data = apply(data, 2, as.integer)
+#view the data
+View(data)
+#rename the rows of the data
+row.names(data)=genes
+#view the data
+View(data)
+
+###### DO ther differential EXP analysis using DeSeq2
+
+#specify how many conditions do you want to compare according to 
+#the phenotypic table
+
+pheno$CL4 = as.factor(pheno$CL4)
+#creat a deseq dataset object
+dds = DESeqDataSetFromMatrix( countData = data , colData = pheno, design = ~ CL4)
+#run the deseq2 worflow
+dds.run = DESeq(dds)
+cond1="Infection" 
+cond2="Healthy"
+
+#specifying teh contrast (to make a res object based on two specific conditions)
+res = results(dds.run, contrast = c("CL4",cond1 ,cond2))
+
+# remove nulls
+res=as.data.frame(res[complete.cases(res), ])
+
+#chose the statstical significant differentaily expressed genes (DEGs) based
+#on the p adjusted value less than 0.05 and biological significance  based
+#on the fold change more than 2
+deseq.deg = res[res$padj < 0.05,]
+View(deseq.deg)
+
+
+library(EnhancedVolcano)
+
+EnhancedVolcano(res,
+                lab = rownames(res),
+                x = "log2FoldChange",
+                y = "padj",
+                title = paste(cond1, "vs", cond2),
+                pCutoff = 0.05,
+                FCcutoff = 1,
+                pointSize = 2,
+                labSize = 3,
+                col = c("grey30", "forestgreen", "royalblue", "red2"),
+                legendPosition = "right")
+
+
+vsd = DESeq2::vst(dds)
+# Get top 50 DEGs by adjusted p-value
+top_genes <- head(rownames(deseq.deg[order(deseq.deg$padj),]), 50)
+
+# Extract normalized counts for top genes
+mat <- assay(vsd)[top_genes, ]
+View(mat)
+
+mat <- t(scale(t(mat)))  # Z-score scaling per gene
+View(mat)
+
+
+# Annotation for columns
+annotation_col <- data.frame(Condition = pheno$CL4)
+rownames(annotation_col) <- colnames(mat)
+
+pheatmap(mat,
+         annotation_col = annotation_col,
+         show_rownames = TRUE,
+         show_colnames = FALSE,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(100),
+         main = "Top 50 DEGs Heatmap (Z-score)",
+         fontsize_row = 6)
+
+
+
+# Plot normalized counts for top 9 DEGs
+top9 <- head(rownames(deseq.deg[order(deseq.deg$padj),]), 9)
+
+par(mfrow = c(3,3))
+for(gene in top9){
+  plotCounts(dds.run, gene = gene,
+             intgroup = "CL4",
+             main = gene,
+             pch = 20, col = "steelblue")
+}
+par(mfrow = c(1,1))
+
+
+library(clusterProfiler)
+library(org.Hs.eg.db)  # Use org.Mm.eg.db for mouse
+
+# Separate up/down regulated genes
+up_genes   <- rownames(deseq.deg[deseq.deg$log2FoldChange > 0,])
+down_genes <- rownames(deseq.deg[deseq.deg$log2FoldChange < 0,])
+
+# Convert gene symbols to Entrez IDs
+up_entrez <- bitr(up_genes, fromType="SYMBOL",
+                  toType="ENTREZID", OrgDb=org.Hs.eg.db)
+
+# GO Biological Process enrichment
+go_bp <- enrichGO(gene         = up_entrez$ENTREZID,
+                  OrgDb        = org.Hs.eg.db,
+                  ont          = "MF",
+                  pAdjustMethod= "BH",
+                  pvalueCutoff = 0.05,
+                  readable     = TRUE)
+
+# Visualize
+barplot(go_bp, showCategory = 15, title = "GO Biological Process - Upregulated")
+dotplot(go_bp, showCategory = 15)
+BP = go_bp@result
+BP = BP[BP$p.adjust < 0.05,]
