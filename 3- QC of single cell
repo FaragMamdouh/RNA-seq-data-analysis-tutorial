@@ -1,0 +1,511 @@
+# Load libraries
+library(SingleCellExperiment)
+library(Seurat)
+library(tidyverse)
+library(Matrix)
+library(scales)
+library(cowplot)
+library(RCurl)
+
+# Read the dataset sample by sample and do QC one by one
+#--------------------Day 0 -----------------------------#
+setwd("/Volumes/BCP-ALL/presentations/single cell/GSE142564_RAW/Day0")
+list.files()
+data <- Read10X("./")
+data[1:6,1:6]
+Day0 <- CreateSeuratObject(counts = data)
+
+View(Day0)
+Day0
+Day0 <- subset(Day0, subset = nFeature_RNA >= 200)
+Day0
+
+# 2 QC
+# mitochondrial percentage
+Day0$mitoRatio <- PercentageFeatureSet(object = Day0, pattern = "^mt-")
+Day0$mitoRatio <- Day0@meta.data$mitoRatio / 100
+
+
+Day0$log10GenesPerUMI <- log10(Day0$nFeature_RNA) / log10(Day0$nCount_RNA)
+
+
+
+# Visualize QC metrics as a violin plot
+VlnPlot(Day0, features = c("nFeature_RNA", "nCount_RNA","mitoRatio"), ncol = 3, layer = "counts")
+Day0 = subset(Day0, nFeature_RNA < 4000 & nCount_RNA < 20000 & mitoRatio < .05)
+VlnPlot(Day0, features = c("nFeature_RNA", "nCount_RNA","mitoRatio"), ncol = 3, layer = "counts")
+
+# Organize metadata
+
+# Add Subject IDs to metadata
+Day0$gender = NA
+Day0$sample[which(str_detect(Day0$orig.ident, "SeuratProject"))] = "Day0"
+
+
+
+
+
+
+# Create metadata dataframe
+metadata <- Day0@meta.data
+
+# Add Cell IDs to metadata
+metadata$cells <- rownames(metadata)
+
+# Keep original ncount and nfeature
+metadata$orig_counts = metadata$nCount_RNA
+metadata$orig_features = metadata$nFeature_RNA
+
+
+
+
+# Rename columns
+metadata <- metadata %>%
+  dplyr::rename(sample = sample,
+                nUMI = nCount_RNA,
+                nGene = nFeature_RNA)
+
+
+
+
+
+
+# Add metadata back to Day0 object
+Day0@meta.data <- metadata
+
+
+
+# What is the number of cell counts per sample?
+metadata %>% 
+  ggplot(aes(x = sample, fill = sample)) + 
+  geom_bar(width = 0.7, color = "black", show.legend = FALSE) +
+  scale_fill_brewer(palette = "Set1") +  
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, color = "black", face = "bold"),
+    axis.text.y = element_text(color = "black"),
+    axis.title.y = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Number of Cells per Sample",
+    x = "",
+    y = "Cell Count"
+  )
+
+
+
+# What is the depth of sequencing
+metadata %>% 
+  ggplot(aes(x = nUMI, color = sample, fill = sample)) + 
+  geom_density(alpha = 0.3, size = 1) +  
+  scale_x_log10() + 
+  geom_vline(xintercept = 2000, linetype = "dashed", color = "black", linewidth = 1) +
+  #geom_vline(xintercept = 16000, linetype = "dashed", color = "black", linewidth = 1) +
+  
+  scale_color_brewer(palette = "Set1") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.title = element_blank(),
+    legend.position = "top",
+    axis.text = element_text(color = "black"),
+    axis.title.y = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 16)
+  ) +
+  labs(
+    title = "Transcript Counts per Cell",
+    x = "nUMI",
+    y = "Cell Density"
+  )
+
+
+
+#what is the number of genes per cells
+metadata %>%
+  ggplot(aes(x = nGene, color = sample, fill = sample)) +
+  geom_density(alpha = 0.3, size = 1) +  
+  scale_x_log10() +
+  geom_vline(xintercept = 1000, linetype = "dashed", color = "black", linewidth = 1) +
+  # geom_vline(xintercept = 4000, linetype = "dashed", color = "black", linewidth = 1) +
+  scale_color_brewer(palette = "Set1") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.title = element_blank(),
+    legend.position = "top",
+    axis.text = element_text(color = "black"),
+    axis.title.y = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Gene Counts per Cell",
+    x = "nGene (log10 scale)",
+    y = "Cell Density"
+  )
+
+
+
+#what is the percentage of mitochonrial genes across the cells
+
+metadata %>% 
+  ggplot(aes(x = mitoRatio, color = sample, fill = sample)) + 
+  geom_density(alpha = 0.3, size = 1) + 
+  scale_x_log10() + 
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16)
+  ) +
+  labs(
+    title = "Distribution of Mitochondrial Ratio per Sample",
+    x = "Mitochondrial Ratio",
+    y = "Cell Density"
+  )
+
+
+
+
+
+
+
+#What are the cells that has low UMI, low Gene Counts, and High mitochondrial genes?
+metadata %>% 
+  ggplot(aes(x = nUMI, y = nGene, color = mitoRatio)) + 
+  geom_point(alpha = 0.6, size = 1.5) + 
+  stat_smooth(method = "lm", color = "blue", se = TRUE, linetype = "dashed") +
+  scale_color_gradient(low = "gray90", high = "black") +
+  scale_x_log10() + 
+  scale_y_log10() + 
+ geom_vline(xintercept = 3200, linetype = "dotted", color = "red", linewidth = 0.8) +
+  geom_hline(yintercept = 900, linetype = "dotted", color = "red", linewidth = 0.8) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "right",
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold", size = 12)
+  ) +
+  labs(
+    title = "UMI vs Gene Counts Colored by Mitochondrial Ratio",
+    x = "nUMI",
+    y = "nGene ",
+    color = "Mito Ratio"
+  ) +
+  facet_wrap(~sample)
+
+
+
+# Distribution of Genes per UMI by Sample
+metadata %>%
+  ggplot(aes(x = log10GenesPerUMI, color = sample, fill = sample)) +
+  geom_density(alpha = 0.3, size = 1) +
+  geom_vline(xintercept = 0.82, linetype = "dashed", color = "black", linewidth = 1) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16)
+  ) +
+  labs(
+    title = "Distribution of Genes per UMI by Sample",
+    x = "Genes per UMI",
+    y = "Cell Density"
+  )
+
+Day0 <- subset(x = Day0, 
+                  subset=  (log10GenesPerUMI > 0.82) & (nGene > 900) & (nUMI >3200))
+
+dim(Day0)
+
+
+
+Day0[["RNA"]] <- JoinLayers(Day0[["RNA"]])
+counts <- LayerData(Day0, assay = "RNA", layer = "counts")
+nonzero <- counts > 0
+keep_genes <- Matrix::rowSums(nonzero) >= 10
+dual_counts <- counts[keep_genes, ]
+Day0 <- CreateSeuratObject(dual_counts, meta.data = Day0@meta.data)
+
+
+# Filter + visualise mitochondrial genes + QC metrics
+Day0[["percent.mt"]] <- PercentageFeatureSet(Day0, pattern = "^MT-")
+Day0
+# Removing BCR-genes IGHV IGKV IGLV 
+Day0 <- Day0[!grepl("^IG[HKL]V", rownames(Day0)), ]
+Day0 <- Day0[!grepl("^IG[HKL]J", rownames(Day0)), ]
+Day0 <- Day0[!grepl("^IG[KL]C", rownames(Day0)), ]
+Day0 <- Day0[!grepl("^IGH[ADEGM]", rownames(Day0)), ]
+Day0
+Day0 <- Day0[!grepl("^TR[ABDG][VJC]", rownames(Day0)), ]
+Day0
+
+# ── Remove BCR genes (mouse) ──────────────────────────────────────────────────
+Day0 <- Day0[!grepl("^Ig[hkl]v", rownames(Day0), ignore.case = FALSE), ]
+Day0 <- Day0[!grepl("^Ig[hkl]j", rownames(Day0), ignore.case = FALSE), ]
+Day0 <- Day0[!grepl("^Ig[kl]c",  rownames(Day0), ignore.case = FALSE), ]
+Day0 <- Day0[!grepl("^Igh[adegm]", rownames(Day0), ignore.case = FALSE), ]
+Day0 <- Day0[!grepl("^Tr[abdg][vjc]", rownames(Day0), ignore.case = FALSE), ]
+
+Day0
+# Visualize QC metrics as a violin plot
+VlnPlot(Day0, 
+        features = c("nFeature_RNA", "nCount_RNA", "mitoRatio"))
+
+
+
+
+#sample 2
+#--------------------Day 60 -----------------------------#
+setwd("/Volumes/BCP-ALL/presentations/single cell/GSE142564_RAW/Day60")
+list.files()
+data <- Read10X("./")
+Day60 <- CreateSeuratObject(counts = data)
+
+View(Day60)
+Day60
+Day60 <- subset(Day60, subset = nFeature_RNA >= 200)
+Day60
+
+# 2 QC
+# mitochondrial percentage
+Day60$mitoRatio <- PercentageFeatureSet(object = Day60, pattern = "^mt-")
+Day60$mitoRatio <- Day60@meta.data$mitoRatio / 100
+
+
+Day60$log10GenesPerUMI <- log10(Day60$nFeature_RNA) / log10(Day60$nCount_RNA)
+
+
+
+# Visualize QC metrics as a violin plot
+VlnPlot(Day60, features = c("nFeature_RNA", "nCount_RNA","mitoRatio"), ncol = 3, layer = "counts")
+Day60 = subset(Day60, nFeature_RNA < 4000 & nCount_RNA < 20000 & mitoRatio < .05)
+VlnPlot(Day60, features = c("nFeature_RNA", "nCount_RNA","mitoRatio"), ncol = 3, layer = "counts")
+
+# Organize metadata
+
+# Add Subject IDs to metadata
+Day60$subject = NA
+Day60$subject[which(str_detect(Day60$orig.ident, "Day60Project"))] = "Day60"
+
+
+
+
+
+
+# Create metadata dataframe
+metadata <- Day60@meta.data
+
+# Add Cell IDs to metadata
+metadata$cells <- rownames(metadata)
+
+# Keep original ncount and nfeature
+metadata$orig_counts = metadata$nCount_RNA
+metadata$orig_features = metadata$nFeature_RNA
+
+
+
+
+# Rename columns
+metadata <- metadata %>%
+  dplyr::rename(sample = orig.ident,
+                nUMI = nCount_RNA,
+                nGene = nFeature_RNA)
+
+
+
+
+
+
+# Add metadata back to Day60 object
+Day60@meta.data <- metadata
+
+
+
+# What is the number of cell counts per sample?
+metadata %>% 
+  ggplot(aes(x = sample, fill = sample)) + 
+  geom_bar(width = 0.7, color = "black", show.legend = FALSE) +
+  scale_fill_brewer(palette = "Set1") +  
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, color = "black", face = "bold"),
+    axis.text.y = element_text(color = "black"),
+    axis.title.y = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Number of Cells per Sample",
+    x = "",
+    y = "Cell Count"
+  )
+
+
+
+# What is the depth of sequencing
+metadata %>% 
+  ggplot(aes(x = nUMI, color = sample, fill = sample)) + 
+  geom_density(alpha = 0.3, size = 1) +  
+  scale_x_log10() + 
+  geom_vline(xintercept = 2000, linetype = "dashed", color = "black", linewidth = 1) +
+  #geom_vline(xintercept = 16000, linetype = "dashed", color = "black", linewidth = 1) +
+  
+  scale_color_brewer(palette = "Set1") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.title = element_blank(),
+    legend.position = "top",
+    axis.text = element_text(color = "black"),
+    axis.title.y = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 16)
+  ) +
+  labs(
+    title = "Transcript Counts per Cell",
+    x = "nUMI",
+    y = "Cell Density"
+  )
+
+
+
+#what is the number of genes per cells
+metadata %>%
+  ggplot(aes(x = nGene, color = sample, fill = sample)) +
+  geom_density(alpha = 0.3, size = 1) +  
+  scale_x_log10() +
+  geom_vline(xintercept = 1000, linetype = "dashed", color = "black", linewidth = 1) +
+  # geom_vline(xintercept = 4000, linetype = "dashed", color = "black", linewidth = 1) +
+  scale_color_brewer(palette = "Set1") +
+  scale_fill_brewer(palette = "Set1") +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.title = element_blank(),
+    legend.position = "top",
+    axis.text = element_text(color = "black"),
+    axis.title.y = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Gene Counts per Cell",
+    x = "nGene (log10 scale)",
+    y = "Cell Density"
+  )
+
+
+
+#what is the percentage of mitochonrial genes across the cells
+
+metadata %>% 
+  ggplot(aes(x = mitoRatio, color = sample, fill = sample)) + 
+  geom_density(alpha = 0.3, size = 1) + 
+  scale_x_log10() + 
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16)
+  ) +
+  labs(
+    title = "Distribution of Mitochondrial Ratio per Sample",
+    x = "Mitochondrial Ratio",
+    y = "Cell Density"
+  )
+
+
+
+
+
+
+
+#What are the cells that has low UMI, low Gene Counts, and High mitochondrial genes?
+metadata %>% 
+  ggplot(aes(x = nUMI, y = nGene, color = mitoRatio)) + 
+  geom_point(alpha = 0.6, size = 1.5) + 
+  stat_smooth(method = "lm", color = "blue", se = TRUE, linetype = "dashed") +
+  scale_color_gradient(low = "gray90", high = "black") +
+  scale_x_log10() + 
+  scale_y_log10() + 
+  # geom_vline(xintercept = 3000, linetype = "dotted", color = "red", linewidth = 0.8) +
+  #  geom_hline(yintercept = 1500, linetype = "dotted", color = "red", linewidth = 0.8) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "right",
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold", size = 12)
+  ) +
+  labs(
+    title = "UMI vs Gene Counts Colored by Mitochondrial Ratio",
+    x = "nUMI",
+    y = "nGene ",
+    color = "Mito Ratio"
+  ) +
+  facet_wrap(~sample)
+
+
+
+# Distribution of Genes per UMI by Sample
+metadata %>%
+  ggplot(aes(x = log10GenesPerUMI, color = sample, fill = sample)) +
+  geom_density(alpha = 0.3, size = 1) +
+  geom_vline(xintercept = 0.82, linetype = "dashed", color = "black", linewidth = 1) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",
+    axis.text = element_text(color = "black"),
+    axis.title = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16)
+  ) +
+  labs(
+    title = "Distribution of Genes per UMI by Sample",
+    x = "Genes per UMI",
+    y = "Cell Density"
+  )
+
+Day60 <- subset(x = Day60, 
+                subset=  (log10GenesPerUMI > 0.82) & (nGene > 1000))
+
+dim(Day60)
+
+
+
+Day60[["RNA"]] <- JoinLayers(Day60[["RNA"]])
+counts <- LayerData(Day60, assay = "RNA", layer = "counts")
+nonzero <- counts > 0
+keep_genes <- Matrix::rowSums(nonzero) >= 10
+dual_counts <- counts[keep_genes, ]
+Day60 <- CreateSeuratObject(dual_counts, meta.data = Day60@meta.data)
+
+
+# Filter + visualise mitochondrial genes + QC metrics
+Day60[["percent.mt"]] <- PercentageFeatureSet(Day60, pattern = "^MT-")
+Day60
+# Removing BCR-genes
+Day60 <- Day60[!grepl("^IG[HKL]V", rownames(Day60)), ]
+Day60 <- Day60[!grepl("^IG[HKL]J", rownames(Day60)), ]
+Day60 <- Day60[!grepl("^IG[KL]C", rownames(Day60)), ]
+Day60 <- Day60[!grepl("^IGH[ADEGM]", rownames(Day60)), ]
+Day60
+Day60 <- Day60[!grepl("^TR[ABDG][VJC]", rownames(Day60)), ]
+Day60
+# Visualize QC metrics as a violin plot
+VlnPlot(Day60, 
+        features = c("nFeature_RNA", "nCount_RNA", "mitoRatio"))
+
+
