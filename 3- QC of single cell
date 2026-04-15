@@ -6,12 +6,16 @@ library(Matrix)
 library(scales)
 library(cowplot)
 library(RCurl)
+#1- QC on samples levels
+#2- QC on genes levels
+
+
 
 # Read the dataset sample by sample and do QC one by one
 #--------------------Day 0 -----------------------------#
 setwd("/Volumes/BCP-ALL/presentations/single cell/GSE142564_RAW/Day0")
 list.files()
-data <- Read10X("./")
+data <- Read10X("/Volumes/BCP-ALL/presentations/single cell/GSE142564_RAW/Day0/")
 data[1:6,1:6]
 Day0 <- CreateSeuratObject(counts = data)
 
@@ -24,7 +28,7 @@ Day0
 # mitochondrial percentage
 Day0$mitoRatio <- PercentageFeatureSet(object = Day0, pattern = "^mt-")
 Day0$mitoRatio <- Day0@meta.data$mitoRatio / 100
-
+grep("^mt-", rownames(Day0))
 
 Day0$log10GenesPerUMI <- log10(Day0$nFeature_RNA) / log10(Day0$nCount_RNA)
 
@@ -38,12 +42,7 @@ VlnPlot(Day0, features = c("nFeature_RNA", "nCount_RNA","mitoRatio"), ncol = 3, 
 # Organize metadata
 
 # Add Subject IDs to metadata
-Day0$gender = NA
-Day0$sample[which(str_detect(Day0$orig.ident, "SeuratProject"))] = "Day0"
-
-
-
-
+Day0$sample = "Day0"
 
 
 # Create metadata dataframe
@@ -185,8 +184,8 @@ metadata %>%
   scale_color_gradient(low = "gray90", high = "black") +
   scale_x_log10() + 
   scale_y_log10() + 
- geom_vline(xintercept = 3200, linetype = "dotted", color = "red", linewidth = 0.8) +
-  geom_hline(yintercept = 900, linetype = "dotted", color = "red", linewidth = 0.8) +
+  geom_vline(xintercept = 3200, linetype = "dotted", color = "red", linewidth = 0.8) +
+  geom_hline(yintercept = 1000, linetype = "dotted", color = "red", linewidth = 0.8) +
   theme_minimal(base_size = 14) +
   theme(
     legend.position = "right",
@@ -223,43 +222,13 @@ metadata %>%
   )
 
 Day0 <- subset(x = Day0, 
-                  subset=  (log10GenesPerUMI > 0.82) & (nGene > 900) & (nUMI >3200))
+               subset=  (log10GenesPerUMI > 0.82) & (nGene > 900) & (nUMI >3200))
 
 dim(Day0)
-
-
-
-Day0[["RNA"]] <- JoinLayers(Day0[["RNA"]])
-counts <- LayerData(Day0, assay = "RNA", layer = "counts")
-nonzero <- counts > 0
-keep_genes <- Matrix::rowSums(nonzero) >= 10
-dual_counts <- counts[keep_genes, ]
-Day0 <- CreateSeuratObject(dual_counts, meta.data = Day0@meta.data)
-
-
-# Filter + visualise mitochondrial genes + QC metrics
-Day0[["percent.mt"]] <- PercentageFeatureSet(Day0, pattern = "^MT-")
-Day0
-# Removing BCR-genes IGHV IGKV IGLV 
-Day0 <- Day0[!grepl("^IG[HKL]V", rownames(Day0)), ]
-Day0 <- Day0[!grepl("^IG[HKL]J", rownames(Day0)), ]
-Day0 <- Day0[!grepl("^IG[KL]C", rownames(Day0)), ]
-Day0 <- Day0[!grepl("^IGH[ADEGM]", rownames(Day0)), ]
-Day0
-Day0 <- Day0[!grepl("^TR[ABDG][VJC]", rownames(Day0)), ]
-Day0
-
-# ── Remove BCR genes (mouse) ──────────────────────────────────────────────────
-Day0 <- Day0[!grepl("^Ig[hkl]v", rownames(Day0), ignore.case = FALSE), ]
-Day0 <- Day0[!grepl("^Ig[hkl]j", rownames(Day0), ignore.case = FALSE), ]
-Day0 <- Day0[!grepl("^Ig[kl]c",  rownames(Day0), ignore.case = FALSE), ]
-Day0 <- Day0[!grepl("^Igh[adegm]", rownames(Day0), ignore.case = FALSE), ]
-Day0 <- Day0[!grepl("^Tr[abdg][vjc]", rownames(Day0), ignore.case = FALSE), ]
-
-Day0
 # Visualize QC metrics as a violin plot
 VlnPlot(Day0, 
-        features = c("nFeature_RNA", "nCount_RNA", "mitoRatio"))
+        features = c("nGene", "nUMI", "mitoRatio"))
+
 
 
 
@@ -282,20 +251,20 @@ Day60$mitoRatio <- PercentageFeatureSet(object = Day60, pattern = "^mt-")
 Day60$mitoRatio <- Day60@meta.data$mitoRatio / 100
 
 
+
 Day60$log10GenesPerUMI <- log10(Day60$nFeature_RNA) / log10(Day60$nCount_RNA)
 
 
 
 # Visualize QC metrics as a violin plot
 VlnPlot(Day60, features = c("nFeature_RNA", "nCount_RNA","mitoRatio"), ncol = 3, layer = "counts")
-Day60 = subset(Day60, nFeature_RNA < 4000 & nCount_RNA < 20000 & mitoRatio < .05)
+Day60 = subset(Day60, nFeature_RNA < 5000 & nCount_RNA < 25000 & mitoRatio < .05)
 VlnPlot(Day60, features = c("nFeature_RNA", "nCount_RNA","mitoRatio"), ncol = 3, layer = "counts")
 
 # Organize metadata
 
 # Add Subject IDs to metadata
-Day60$subject = NA
-Day60$subject[which(str_detect(Day60$orig.ident, "Day60Project"))] = "Day60"
+Day60$sample = "Day60"
 
 
 
@@ -317,8 +286,7 @@ metadata$orig_features = metadata$nFeature_RNA
 
 # Rename columns
 metadata <- metadata %>%
-  dplyr::rename(sample = orig.ident,
-                nUMI = nCount_RNA,
+  dplyr::rename(nUMI = nCount_RNA,
                 nGene = nFeature_RNA)
 
 
@@ -358,7 +326,7 @@ metadata %>%
   ggplot(aes(x = nUMI, color = sample, fill = sample)) + 
   geom_density(alpha = 0.3, size = 1) +  
   scale_x_log10() + 
-  geom_vline(xintercept = 2000, linetype = "dashed", color = "black", linewidth = 1) +
+  geom_vline(xintercept = 4000, linetype = "dashed", color = "black", linewidth = 1) +
   #geom_vline(xintercept = 16000, linetype = "dashed", color = "black", linewidth = 1) +
   
   scale_color_brewer(palette = "Set1") +
@@ -441,8 +409,8 @@ metadata %>%
   scale_color_gradient(low = "gray90", high = "black") +
   scale_x_log10() + 
   scale_y_log10() + 
-  # geom_vline(xintercept = 3000, linetype = "dotted", color = "red", linewidth = 0.8) +
-  #  geom_hline(yintercept = 1500, linetype = "dotted", color = "red", linewidth = 0.8) +
+  geom_vline(xintercept = 4000, linetype = "dotted", color = "red", linewidth = 0.8) +
+  geom_hline(yintercept = 1000, linetype = "dotted", color = "red", linewidth = 0.8) +
   theme_minimal(base_size = 14) +
   theme(
     legend.position = "right",
@@ -464,7 +432,7 @@ metadata %>%
 metadata %>%
   ggplot(aes(x = log10GenesPerUMI, color = sample, fill = sample)) +
   geom_density(alpha = 0.3, size = 1) +
-  geom_vline(xintercept = 0.82, linetype = "dashed", color = "black", linewidth = 1) +
+  geom_vline(xintercept = 0.81, linetype = "dashed", color = "black", linewidth = 1) +
   theme_minimal(base_size = 14) +
   theme(
     legend.position = "top",
@@ -479,33 +447,263 @@ metadata %>%
   )
 
 Day60 <- subset(x = Day60, 
-                subset=  (log10GenesPerUMI > 0.82) & (nGene > 1000))
+                subset =  (log10GenesPerUMI > 0.81) & (nGene > 1000) & (nUMI > 3100))
 
 dim(Day60)
 
+VlnPlot(Day60, 
+        features = c("nGene", "nUMI", "mitoRatio"))
 
 
-Day60[["RNA"]] <- JoinLayers(Day60[["RNA"]])
-counts <- LayerData(Day60, assay = "RNA", layer = "counts")
+merged <- merge(x = Day0, y = Day60)
+
+# ── Remove BCR genes (mouse) ──────────────────────────────────────────────────
+merged <- merged[!grepl("^Ig[hkl]v", rownames(merged), ignore.case = FALSE), ]
+merged <- merged[!grepl("^Ig[hkl]j", rownames(merged), ignore.case = FALSE), ]
+merged <- merged[!grepl("^Ig[kl]c",  rownames(merged), ignore.case = FALSE), ]
+merged <- merged[!grepl("^Igh[adegm]", rownames(merged), ignore.case = FALSE), ]
+merged <- merged[!grepl("^Tr[abdg][vjc]", rownames(merged), ignore.case = FALSE), ]
+
+
+merged[["RNA"]] <- JoinLayers(merged[["RNA"]])
+counts <- LayerData(merged, assay = "RNA", layer = "counts")
 nonzero <- counts > 0
 keep_genes <- Matrix::rowSums(nonzero) >= 10
 dual_counts <- counts[keep_genes, ]
-Day60 <- CreateSeuratObject(dual_counts, meta.data = Day60@meta.data)
+merged <- CreateSeuratObject(dual_counts, meta.data = merged@meta.data)
+
+#------------------------------------------------------------------------------#
+# CellCycle Scoring
+merged <- NormalizeData(merged)
+s.genes <- str_to_title(cc.genes$s.genes)
+g2m.genes <- str_to_title(cc.genes$g2m.genes)
+s.genes
+merged <- CellCycleScoring(merged, 
+                           g2m.features = g2m.genes, 
+                           s.features = s.genes,
+                           set.ident = TRUE)
+# Visualize the distribution of cell cycle markers across
+RidgePlot(merged, features = c("Pcna", "Top2a", "Mcm6", "Mki67"), ncol = 2)
+# View cell cycle scores and phases assigned to cells                                 
+View(merged@meta.data)   
+
+# Identify the most variable genes
+merged <- FindVariableFeatures(merged, 
+                               selection.method = "vst",
+                               nfeatures = 2000, 
+                               verbose = FALSE)
+merged <- ScaleData(merged)
 
 
-# Filter + visualise mitochondrial genes + QC metrics
-Day60[["percent.mt"]] <- PercentageFeatureSet(Day60, pattern = "^MT-")
-Day60
-# Removing BCR-genes
-Day60 <- Day60[!grepl("^IG[HKL]V", rownames(Day60)), ]
-Day60 <- Day60[!grepl("^IG[HKL]J", rownames(Day60)), ]
-Day60 <- Day60[!grepl("^IG[KL]C", rownames(Day60)), ]
-Day60 <- Day60[!grepl("^IGH[ADEGM]", rownames(Day60)), ]
-Day60
-Day60 <- Day60[!grepl("^TR[ABDG][VJC]", rownames(Day60)), ]
-Day60
-# Visualize QC metrics as a violin plot
-VlnPlot(Day60, 
-        features = c("nFeature_RNA", "nCount_RNA", "mitoRatio"))
+# Perform PCA
+merged <- RunPCA(merged)
+
+# Plot the PCA colored by cell cycle phase
+DimPlot(merged, reduction = "pca", group.by= "Phase",
+        split.by = "Phase")
+
+#1- QC on samples levels
+#2- QC on genes levels
+#3- CellCycle scoring
 
 
+# ==============================================================================#
+#                   8. SCT NORMALIZATION, PCA, UMAP, CLUSTERING                 #
+# ==============================================================================#
+Day0 <- subset(merged, subset = sample == "Day0")
+Day60 <- subset(merged, subset = sample == "Day60")
+#SCTransform MUST be run on each sample not on the merged object
+#SCTransform MUST be run on each sample not on the merged object
+
+Day0 <- SCTransform(
+  Day0,
+  verbose = FALSE,
+  vars.to.regress = c("S.Score", "G2M.Score")
+)
+View(Day0)
+Day60 <- SCTransform(
+  Day60,
+  verbose = FALSE,
+  vars.to.regress = c("S.Score", "G2M.Score")
+)
+
+# Integrating NB3 and BM4
+DefaultAssay(Day0) = "SCT"
+DefaultAssay(Day60) = "SCT"
+bm.list <- list(Day0, Day60)
+bm.features <- SelectIntegrationFeatures(object.list = bm.list, nfeatures = 3000)
+bm.list <- PrepSCTIntegration(object.list = bm.list, anchor.features = bm.features)
+
+bm.anchors <- FindIntegrationAnchors(
+  object.list = bm.list, 
+  normalization.method = "SCT", 
+  anchor.features = bm.features)
+
+bm.integrated <- IntegrateData(anchorset = bm.anchors, 
+                               normalization.method = "SCT")
+DefaultAssay(bm.integrated) = "integrated"
+#Dimensionality reduction and clustering
+bm.integrated <- RunPCA(object = bm.integrated,
+                        verbose = F)
+for(i in c(20)){
+  ElbowPlot(bm.integrated, ndims = 50)
+  bm.integrated <- RunUMAP(object = bm.integrated,
+                           dims = 1:i, verbose = FALSE)
+  bm.integrated <- FindNeighbors(bm.integrated, reduction = "pca", dims = 1:i, verbose = FALSE)
+  bm.integrated <- FindClusters(bm.integrated, resolution = c(seq(from = 0.1, to = 2.0, by = 0.1)), verbose = FALSE)
+  print(clustree(x = bm.integrated, prefix = "integrated_snn_res.") + ggtitle(paste("clustree", i ,"PCs")))
+}
+
+
+Idents(bm.integrated) = "integrated_snn_res.0.1"
+
+DimPlot(bm.integrated, reduction = "umap", label = TRUE, pt.size = 1, order = TRUE, label.size =6) +
+  theme(
+    axis.title = element_blank(),   
+    axis.text = element_blank(),    
+    axis.ticks = element_blank()   
+  )
+DimPlot(bm.integrated, reduction = "umap", split.by = "sample",label = TRUE, pt.size = 1, order = TRUE, label.size =6) +
+
+  theme(
+    axis.title = element_blank(),   
+    axis.text = element_blank(),    
+    axis.ticks = element_blank()   
+  ) + NoLegend()
+
+DimPlot(bm.integrated, reduction = "umap", split.by = "Phase",label = TRUE, pt.size = 1, order = TRUE, label.size =6)   +
+  theme(
+    axis.title = element_blank(),   
+    axis.text = element_blank(),    
+    axis.ticks = element_blank()   
+  ) + NoLegend()
+
+FeaturePlot(bm.integrated, features = c("nUMI","nGene", "mitoRatio", "Mki67","Cd3e","Cd19","Adgre1"), label = TRUE, ncol = 3, order =TRUE)
+
+#==============================================================================#
+DefaultAssay(bm.integrated) = "RNA"
+bm.integrated <- NormalizeData(object = bm.integrated, scale.factor = 10000, normalization.method = "LogNormalize") 
+bm.integrated <- ScaleData(object = bm.integrated, features = rownames(bm.integrated)) 
+
+
+Idents(bm.integrated) = "integrated_snn_res.0.5"
+
+DimPlot(bm.integrated, reduction = "umap", label = TRUE, pt.size = 1, order = TRUE, label.size =6) +
+  scale_color_manual(values =c("#264653", "#2A9D8F", "#8AB17D", "#E9C46A", "#F4A261",
+                               "#E76F51", "#CDB4DB", "#6D6875", "#B5838D", "#FFB4A2", "#CCB4A2","#AEB4E2","#DFC9A1")
+  )   +
+  theme(
+    axis.title = element_blank(),   
+    axis.text = element_blank(),    
+    axis.ticks = element_blank()   
+  )
+DimPlot(bm.integrated, reduction = "umap", split.by = "sample",label = FALSE, pt.size = 1, order = TRUE, label.size =6) +
+  scale_color_manual(values =c("#264653", "#2A9D8F", "#8AB17D", "#E9C46A", "#F4A261",
+                               "#E76F51", "#CDB4DB", "#6D6875", "#B5838D", "#FFB4A2", "#CCB4A2","#AEB4E2","#DFC9A1")
+  )   +
+  theme(
+    axis.title = element_blank(),   
+    axis.text = element_blank(),    
+    axis.ticks = element_blank()   
+  ) + NoLegend()
+
+DimPlot(bm.integrated, reduction = "umap", split.by = "Phase",label = FALSE, pt.size = 1, order = TRUE, label.size =6) +
+  scale_color_manual(values =c("#264653", "#2A9D8F", "#8AB17D", "#E9C46A", "#F4A261",
+                               "#E76F51", "#CDB4DB", "#6D6875", "#B5838D", "#FFB4A2", "#CCB4A2","#AEB4E2","#DFC9A1")
+  )   +
+  theme(
+    axis.title = element_blank(),   
+    axis.text = element_blank(),    
+    axis.ticks = element_blank()   
+  ) + NoLegend()
+
+
+
+## Top-10 upregulated DEGs
+Thymus1.markers_orig <- FindAllMarkers(object = filltered2,
+                                       logfc.threshold = 0.25,
+                                       test.use = "negbinom",
+                                       only.pos = T, return.thresh = 0.05)
+Thymus1.markers <- Thymus1.markers_orig %>% filter(p_val_adj > 0 & p_val_adj < 0.05)
+
+
+#------------------------------------------------------------#
+Thymus1.markers %>%
+  group_by(cluster) %>%
+  dplyr::filter(avg_log2FC > 1) %>%
+  slice_head(n = 10) %>%
+  ungroup() -> top10
+library(dplyr)
+
+markers_ordered <- Thymus1.markers %>%
+  arrange(cluster)
+
+genes <- markers_ordered$gene
+cluster_sizes <- markers_ordered %>%
+  dplyr::count(cluster)
+
+line_positions <- cumsum(cluster_sizes$n)
+
+p <- DoHeatmap(
+  filltered2,
+  features = Thymus1.markers$gene,
+  group.bar = TRUE,
+  size = 5,
+  draw.lines = TRUE,
+  label = TRUE,
+  group.colors = cluster_colors
+)
+
+p + theme(axis.text.y = element_blank())
+
+
+DoHeatmap(
+  filltered2,
+  features = top10$gene,
+  group.bar = TRUE,
+  size = 5,
+  draw.lines = TRUE,
+  label = TRUE,
+  group.colors = cluster_colors
+)
+
+
+
+library(monocle3)
+library(SeuratWrappers)
+DefaultAssay(filltered) = "integrated"
+# Initialise the object
+bm.integrated.cds <- as.cell_data_set(filltered, group.by ="integrated_snn_res.0.3" )
+bm.integrated.cds <- cluster_cells(cds = bm.integrated.cds, reduction_method = "UMAP")
+bm.integrated.cds <- learn_graph(bm.integrated.cds, use_partition = TRUE)
+
+# Visualise plot
+plot_cells(
+  cds = bm.integrated.cds,
+  show_trajectory_graph = TRUE
+) +
+  theme(
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  )
+
+# Call order cells
+bm.integrated.cds <- order_cells(bm.integrated.cds, reduction_method = "UMAP")
+
+# Plot
+DimPlot(filltered, reduction = "umap", label = TRUE, pt.size = 1, order = TRUE, label.size =6) +
+  scale_color_manual(values =c( "#E76F51","#6D6875","#CDB4DB","#E9C46A",    "#2A9D8F","#8AB17D",
+                                "#264653", "#F4A261", "#B5838D")
+  )   +
+  theme(
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  )
+p2 <- plot_cells(
+  cds = bm.integrated.cds,
+  color_cells_by = "pseudotime",
+  show_trajectory_graph = TRUE
+)
+p1 + p2
